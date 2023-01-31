@@ -1,0 +1,17 @@
+n_nodes=8000
+degree_average=7.2
+degree_90th_percentile=15
+degree_50th_percentile=2
+degree_10th_percentile=1
+capacity_average=5000
+capacity_90th_percentile=10000
+capacity_50th_percentile=7000
+capacity_10th_percentile=2000
+base_fee_lower=2
+base_fee_upper=5
+proportional_fee_const_lower=2
+proportional_fee_const_upper=4
+imbalance_fee_const_lower=2
+imbalance_fee_const_upper=4
+num_of_txn=200
+txn_fee_upper_limit=200
