@@ -28,6 +28,7 @@ struct network_params{
   network_fee fees_upper_limit;
   int num_of_txn;
   int txn_fee_upper_limit;
+  double faulty_node_probability;
 };
 
 struct channel{
@@ -79,14 +80,24 @@ struct transaction{
     int fee;
     int status;
     int path_length;
-    vector<pair<int, edge*>> txn_path;
     // Status:
-    // 0 if ongoing
-    // 1 if not complete
-    // 2 if req is invalid as receiver doesn't exist
-    // 3 if req cannot be full-filled due to channel capacity
-    // 4 if ongoing
-    // 5 if complete
+    // 0 if not started
+    // 1 if cancelled
+    // 2 if complete
+};
+
+// structure to store the path chosen by a transaction.
+// A complete path consists of vexctor of `path_var`
+struct path_var{
+  int txn_id; // Transaction id which this intermediate node belongs to.
+  int node_id;
+  long long int time_taken; // Represents the time taken to reach at this node.
+  int fee_taken; // Represents the fee taken by this node.
+  // For sender and receiver node, fee taken is 0.
+
+  edge* outgoing_edge;
+
+  long long int amount_passed; // Represents the amount passing through this outgoing edge.
 };
 
 #endif

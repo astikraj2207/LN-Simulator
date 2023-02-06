@@ -1,39 +1,38 @@
 #include <bits/stdc++.h>
 #include <cstdlib>
+#include <random>
 #include "variables.h"
 #include "transactions.h"
 #define ll long long int
 
 using namespace std;
 
-void revert_payment(vector<pair<edge*,ll>> &edges_updated){
-    cout<<"Txn reverted\n";
-    for(auto& [cur_edge, amount]: edges_updated){
-        cur_edge->balance+=amount;
+// For priority queue to compare.
+struct compare_events{
+    bool operator()(const pair<int, path_var>& p1, const pair<int, path_var>& p2){
+        return p1.second.time_taken > p2.second.time_taken;
     }
-}
-
-void update_incoming_path_edges(network* cur_network, vector<pair<edge*,ll>> &edges_updated){
-    for(auto& [cur_edge, amount]: edges_updated){
-        auto itr = cur_network->edges.find(cur_edge->counter_edge_id);
-        if(itr!=cur_network->edges.end()){
-            (itr->second)->balance-=amount;
-        }
-    }
-}
+};
 
 void process_payments(network* cur_network, const network_params& net_param){
   vector<transaction> transactions_to_execute = get_random_transactions(net_param);
-  vector<pair<edge*, long long int>> rem_update_balances; 
-  // Stores the edges whose balances will be updated for the respective edges
-  // stores pointer of edge and the amount to be added
-  // The balances are reduced from which payment went, needs to be added for the counter edges.
-  
-  // Stores the path and the outgoing edge pointer for each transaction
-  // txn_paths[i] represents the pair of ditance and a  vector pair whose each element is {nodes, outgoing edge pointer}
-  vector<pair<vector<ll>, vector<pair<int, edge*>>>> txn_paths(int(transactions_to_execute.size()));
 
-  int max_path_size=0;
+  // Code for finding if the node has become inactive randmoly with given probability.
+  std::default_random_engine generator;
+  double faulty_prob = net_param.faulty_node_probability;
+  ll num=1;
+  while(faulty_prob < 1.0){
+    faulty_prob*=10;
+    num*=10;
+  }
+  std::uniform_int_distribution<int> distribution(1,num);
+
+  srand(time(NULL));
+  // Stores the events to be processed i.e. edges to be processed.
+  // The top element in the queue is the one with the least time(ready time).
+  // {event type, event}
+  priority_queue<pair<int, path_var>, vector<pair<int, path_var>>, compare_events> process_events;
+  
   // Payment request
   for(int ind=0;ind<transactions_to_execute.size();ind++){
     auto& cur_txn = transactions_to_execute[ind];
@@ -41,22 +40,21 @@ void process_payments(network* cur_network, const network_params& net_param){
     // cur_txn.receiver_id=2;
     if(payment_request(cur_txn, cur_network)){
       // This transaction might be completed.
-      vector<ll> dis;
-      vector<pair<int,edge*>> path;
-      auto res = get_payment_path(cur_txn, cur_network, net_param);
-      dis=res.first;
-      path=res.second;
-      // cur_txn.txn_path = path;
-      txn_paths[ind] = res;
+      vector<path_var> path;
+      path = get_payment_path(cur_txn, cur_network, net_param);
+
       cur_txn.path_length = path.size()-1;
-      max_path_size=max(max_path_size, int(path.size()));
+
       cout<<"Sender: "<<cur_txn.sender_id<<" Receiver: "<<
       cur_txn.receiver_id<<" Amt: "<<cur_txn.amount<<"\n";
       cout<<"Fee taken "<<cur_txn.fee<<"\n";
 
       cout<<"Path taken, len :"<<path.size()<<"\n";
-      for(auto x:path){
-        cout<<x.first<<" --> ";
+      for(int i=0;i<path.size();i++){
+        cout<<path[i].node_id<<" --> ";
+        path[i].txn_id = ind;
+        process_events.push(make_pair(1,path[i]));
+        // Event type is 1, i.e. it represents normal hop, not reverted one
       }
       cout<<"\n";
     }else{
@@ -64,82 +62,82 @@ void process_payments(network* cur_network, const network_params& net_param){
     }
   }
 
-  vector<int> transaction_fee(transactions_to_execute.size(),0);
-  
-  // Stores the pointer to edges in the path going from source to destination,
-  // as the amount has been deducted from them. The second paramter is the amount transaferred through this.
-  vector<vector<pair< edge*, ll>>> edges_updated(transactions_to_execute.size());
+    vector<vector<path_var>> hops_processed(transactions_to_execute.size());
+  // Now we have the events to vbe processed and the time when they are ready to be processed.
 
-
-  // 2 if ongoing
-  // 1 if completed
-  // 0 if cancelled
-  vector<int> transaction_status(transactions_to_execute.size(),2);
-
-  //Now all the transaction steps are stored in a vector
-  // We execute them one by one
-  for(int step=1;step<max_path_size;step++){
-    // txn_paths[step] -> pair{ distance vector, vector pair{path node, outgoing edge*}}
-    for(int txn_ind=0;txn_ind< transactions_to_execute.size(); txn_ind++){
-      if(transaction_status[txn_ind]!=2 || txn_paths[txn_ind].second.size()<= step)continue;
-        // cout<<"Executing txns\n";
-      auto itr  = cur_network->nodes.find(txn_paths[txn_ind].second[step].first);
-      if(itr == cur_network->nodes.end()){
-          cout<<"In `line 80 transactions.cpp`, nodes with id "<<txn_paths[txn_ind].second[step].first
-          <<" not found in mapping of network, node id to node pointer\n.";
-          transactions_to_execute[txn_ind].status=3;
-          break;
-      }else{
-          edge* incoming_edge = txn_paths[txn_ind].second[step-1].second;
-          node* path_node = itr->second;
-          if(step != txn_paths[txn_ind].second.size()-1){
-            int balance_diff = abs(incoming_edge->balance - cur_network->edges[incoming_edge->counter_edge_id]->balance);
-              int cur_fee = calc_fee(path_node,transactions_to_execute[txn_ind].amount, balance_diff);
-              path_node->fee_collected += cur_fee;
-              transaction_fee[txn_ind]+=cur_fee;
-          }
-          if(path_node->id >= txn_paths[txn_ind].first.size()){
-              cout<<"Node id exceeds distance vector size\n";
-              break;
-          }
-          ll amt_though_this_edge = txn_paths[txn_ind].first[path_node->id];
-
-          if(incoming_edge->balance < amt_though_this_edge){
-            // Cancel transaction due to lack of balance
-            cout<<"Cancelled due to lack of balance\n";
-            transaction_status[txn_ind]=0;
-            revert_payment(edges_updated[txn_ind]);
-            edges_updated[txn_ind].clear();
-            transactions_to_execute[txn_ind].status=3;
-            break;
-          }
-          incoming_edge->balance -= amt_though_this_edge;
-          edges_updated[txn_ind].push_back({incoming_edge, amt_though_this_edge});
-
-          if(step == txn_paths[txn_ind].second.size()-1){
-            // This is the destination,  transaction is complete.
-            transaction_status[txn_ind]=1;
-            transactions_to_execute[txn_ind].status=5;
-          }
+  while(!process_events.empty()){
+    auto cur_event = process_events.top();
+    process_events.pop();
+    int cur_txn_id = cur_event.second.txn_id;
+    if(transactions_to_execute[cur_txn_id].status==1){
+        // This transaction is cancelled. Do not process any further steps.
+        continue;
     }
+    path_var& cur_path_var = cur_event.second;
+    node* cur_node = cur_network->nodes[cur_path_var.node_id];
+    edge* outgoing_edge = cur_path_var.outgoing_edge;
+    if(cur_event.first == 2){
+        // Reverted txn
+        outgoing_edge->balance += cur_path_var.amount_passed;
+    }
+    else{
+        if(cur_network->nodes.find(cur_path_var.node_id) ==cur_network->nodes.end()){
+            cout<<"Node not found\n";return;
+        }
+
+        // If this is the destination,  update the balances and give the fees to intermediate nodes.
+        if(!outgoing_edge){
+            // This transaction is complete.
+            for(int i=0;i<hops_processed[cur_txn_id].size();i++){
+                path_var temp_int_node = hops_processed[cur_txn_id][i];
+                if(cur_network->edges.find(temp_int_node.outgoing_edge->counter_edge_id) == cur_network->edges.end() ){
+                    cout<<"Edge mapping not found, line 104. \n";
+                    return;
+                }
+                edge* incoming_edge = cur_network->edges[temp_int_node.outgoing_edge->counter_edge_id];
+                incoming_edge->balance += temp_int_node.amount_passed;
+                if(cur_network->nodes.find(temp_int_node.node_id) == cur_network->nodes.end() ){
+                    cout<<"Node mapping not found, line 110 \n";
+                    return;
+                }
+                node* temp_node = cur_network->nodes[temp_int_node.node_id];
+                temp_node->fee_collected += temp_int_node.fee_taken;
+            }
+            transactions_to_execute[cur_txn_id].status = 2;
+            continue;
+        }
+
+        int random_number = distribution(generator);
+        if(random_number <= faulty_prob){
+            cout<<"Inactive node............\n";
+        }
+        if(random_number <= faulty_prob || outgoing_edge->balance < cur_path_var.amount_passed){
+            // Inactive node or Not enough balance.
+            // Cancel txn.
+            transactions_to_execute[cur_txn_id].status = 1;
+            // revert txn.
+            ll time_var = cur_event.second.time_taken;
+            for(int i=0;i<hops_processed[cur_txn_id].size();i++){
+                time_var += get_hop_processing_time(10,20);
+                process_events.push({2, hops_processed[cur_txn_id][i]});
+            }
+            continue;
+        }
         
+        outgoing_edge->balance -=cur_path_var.amount_passed;
+        hops_processed[cur_txn_id].push_back(cur_path_var);
     }
   }
 
-  for(auto& updated_paths: edges_updated){
-    update_incoming_path_edges(cur_network, updated_paths);
-  }
-
+  // Calculate network statistics.
   int txn_completed=0;
-  long long int average_path_length=0;
+  double average_path_length=0;
   long long int average_fee=0;
   for(int ind=0;ind<transactions_to_execute.size();ind++){
-    if(transaction_status[ind]==1){
+    if(transactions_to_execute[ind].status==2){
         txn_completed++;
-        average_path_length+= txn_paths[ind].second.size();
-        // cout<<transaction_fee[ind]<<"\n";
-        average_fee += transaction_fee[ind];
-        transactions_to_execute[ind].fee=transaction_fee[ind];
+        average_path_length+= transactions_to_execute[ind].path_length;
+        average_fee += transactions_to_execute[ind].fee;
     }
   }
 
@@ -157,11 +155,8 @@ void process_payments(network* cur_network, const network_params& net_param){
 }
 
 
-
 vector<transaction> get_random_transactions(const network_params& net_param){
     vector<transaction> res;
-    
-    srand(time(NULL));
 
     for(int i=0;i<net_param.num_of_txn;i++){
         transaction new_txn;
@@ -169,7 +164,7 @@ vector<transaction> get_random_transactions(const network_params& net_param){
         new_txn.receiver_id = rand()%(net_param.n_nodes) + 1;
         new_txn.amount = rand()%(net_param.txn_fee_upper_limit)+1;
         new_txn.fee=0;
-        new_txn.status=1;
+        new_txn.status=0;
 
         // Corner case if sender id and receiver id are same.
         // Increase the sender id if so unless it is the maximum id limit.
@@ -184,20 +179,18 @@ vector<transaction> get_random_transactions(const network_params& net_param){
 }
 
 // Status of Txn:
-    // 1 if not complete
-    // 2 if req is invalid as receiver doesn't exist
-    // 3 if req cannot be full-filled due to channel capacity
-    // 4 if ongoing
-    // 5 if complete
+// 0 if not started
+// 1 if cancelled
+// 2 if complete
 bool payment_request(transaction& req, network* cur_network){
     // Check if the receiver exists in the network.
     if(cur_network->nodes.find(req.receiver_id) == cur_network->nodes.end()){
-        req.status = 2;
+        req.status = 1;
         return false;
     }
     // Check if the sender exists in the network.
     if(cur_network->nodes.find(req.sender_id) == cur_network->nodes.end()){
-        req.status = 2;
+        req.status = 1;
         return false;
     }
 
@@ -212,7 +205,7 @@ bool payment_request(transaction& req, network* cur_network){
     }
     if(edge_exists)return true;
     else{
-        req.status=3;
+        req.status=1;
         return false;
     }
 
@@ -239,13 +232,18 @@ double calc_fee(node* cur_node, long long int amount, int balance_diff){
     return fee;
 }
 
-// returns the distance of each node from receiver node and the path to be followed from sender to receiver as well as the pointer to incoming edge.
-// {`a`, {`b`, `c`}}
-// `a`: distance vector from receiver node, dis[i] denotes the distance of node `i` from the receiver node
-// 'b': node id in the path followed from sender to receiver
-// `c`: pointer to the incoming edge to this node, i.e. from which edge we came to this node
-// Returns empty pair of vectors in case no path exist.
-pair<vector<ll>,vector<pair<int,edge*>>> get_payment_path(transaction& req, network* cur_network,const network_params& net_param){
+// Returns random time valuee between given bounds.
+int get_hop_processing_time(int lower_limit, int upper_limit){
+    return (rand()%(upper_limit - lower_limit) + lower_limit);
+}
+
+// Returns path calculation time (random values)
+// Values vary between 100-200
+int get_path_calculation_time(){
+    return rand()%100 + 100;
+}
+
+vector<path_var> get_payment_path(transaction& req, network* cur_network,const network_params& net_param){
     int start_node = req.receiver_id; // Vs
     int dest_node = req.sender_id; // Vr
     int total_nodes = net_param.n_nodes;
@@ -270,7 +268,6 @@ pair<vector<ll>,vector<pair<int,edge*>>> get_payment_path(transaction& req, netw
             cur_node.second<<" node doesn't exist\n";
             break;
         }
-        // cout<<"HHHH\n";
         ll amount_to_be_transferred = cur_node.first;
         // We are traversing the graph in reverse order, i.e.
         // we are going to source from destinantion.
@@ -306,75 +303,42 @@ pair<vector<ll>,vector<pair<int,edge*>>> get_payment_path(transaction& req, netw
 
     if(dis[dest_node]>1e17){
         // We cannot reach via any possible path. i.e. no path can fullfil the required capacity.
-        req.status = 3; // req can't be completed due to limited channel capacity.
-        vector<ll> empty_vec={};
-        vector<pair<int,edge*>> empty_path_vec;
-        return make_pair(empty_vec,empty_path_vec);
+        req.status = 1; // req can't be completed due to limited channel capacity.
+        vector<path_var> empty_path_vec;
+        return empty_path_vec;
         // Empty vector indicates that no path exists
-    }else{
-        req.fee = dis[dest_node] -req.amount;
     }
+    
+    req.fee = dis[dest_node] -req.amount;
     // Restore path.
-    vector<pair<int,edge*>> path;
+    vector<path_var> path;
+    int time_taken = get_path_calculation_time();
     for(int v = dest_node; v!=-1 && v!= start_node; v = prev_node[v].first){
-        // cout<<"###### v: "<<v<<"\n";
-        path.push_back({v,prev_node[v].second});
+        path_var intermediate_node;
+        intermediate_node.node_id = v;
+        intermediate_node.time_taken = time_taken;
+        intermediate_node.outgoing_edge = prev_node[v].second;
+        intermediate_node.fee_taken=0;
+        intermediate_node.amount_passed = 0;
+        path.push_back(intermediate_node);
+        // Note that the lower bound and upper bound of time
+        // for hop processing is arbitrarily chosen. ( 10 and 20)
+        time_taken += get_hop_processing_time(10,20);
     }
-    path.push_back({start_node,NULL});
-    // reverse(path.begin(),path.end());
-    return make_pair(dis, path);
+    path_var receiver_node;
+    receiver_node.node_id = start_node;
+    receiver_node.time_taken = time_taken;
+    receiver_node.outgoing_edge = NULL;
+    receiver_node.fee_taken=0;
+    path.push_back(receiver_node);
+
+    for(int i=1;i<path.size()-1;i++){
+        path[i].fee_taken  = dis[path[i].node_id] - dis[path[i+1].node_id];
+        path[i].amount_passed = dis[path[i+1].node_id];
+    }
+    if(!path.empty())path[0].amount_passed = req.amount;
+    req.path_length = path.size();
+
+    return path;
 
 }
-
-/*
-vector<pair<edge*, long long int>> execute_transaction(transaction& req, const vector<int>& dis, const vector<pair<int,edge*>>& path, network* cur_network){
-    vector<pair<edge*, long long int>> rem_update_balances; 
-    if(path.size()<2)return rem_update_balances;
-    node* prev_node = cur_network->nodes[path[0].first];
-    req.status = 0; // ongoing transaction
-    int transaction_fee=0;
-    // path[i] = { node id, edge id of outgoing edge}
-    // O ----> 
-    // cout<<"Executing transactions\n";
-    // Calculate fee
-    for(int i=1;i<path.size();i++){
-        auto itr  = cur_network->nodes.find(path[i].first);
-        if(itr == cur_network->nodes.end()){
-            cout<<"In `execute_network` function, nodes with id "<<path[i].first
-            <<" not found in mapping of network, node id to node pointer\n.";
-            req.status=3;
-            return rem_update_balances;
-        }else{
-            node* path_node = itr->second;
-            if(i!=path.size()-1){
-                int cur_fee = calc_fee(path_node,req.amount);
-                path_node->fee_collected += cur_fee;
-                transaction_fee+=cur_fee;
-            }
-            if(path_node->id >= dis.size()){
-                cout<<"Node id exceeds distance vector size\n";break;
-            }
-            ll amt_though_this_edge = dis[path_node->id];
-            // for the incoming edge to this node
-            edge* incoming_edge = path[i-1].second;
-            incoming_edge->balance -= amt_though_this_edge;
-
-            // for the outgoing edge from this node
-            auto edge_itr = cur_network->edges.find(path[i-1].second->counter_edge_id);
-            if(edge_itr == cur_network->edges.end()){
-                cout<<"Edge problem.\n";
-                req.status=3;
-                return rem_update_balances;
-            }else{
-                edge* outgoing_edge = edge_itr->second;
-                rem_update_balances.push_back({outgoing_edge, amt_though_this_edge});
-                //outgoing_edge->balance += amt_though_this_edge;
-            }
-            
-        }
-    }
-    req.fee = transaction_fee;
-    req.status = 5;
-    return rem_update_balances;
-}
-*/

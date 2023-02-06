@@ -15,3 +15,4 @@ imbalance_fee_const_lower=2
 imbalance_fee_const_upper=4
 num_of_txn=200
 txn_fee_upper_limit=200
+faulty_node_probability=0.001

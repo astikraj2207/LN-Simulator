@@ -99,6 +99,8 @@ void read_input(network_params* net_params){
           net_params->num_of_txn = stoi(value);
         else if(key == "txn_fee_upper_limit")
           net_params->txn_fee_upper_limit = stol(value);
+        else if(key == "faulty_node_probability")
+          net_params-> faulty_node_probability = stod(value);
     }
     
     input_file.close();
