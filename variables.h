@@ -26,6 +26,7 @@ struct network_params{
   input_averages capacity;
   network_fee fees_lower_limit;
   network_fee fees_upper_limit;
+  int num_of_txn_sets;
   int num_of_txn;
   int txn_fee_upper_limit;
   double faulty_node_probability;

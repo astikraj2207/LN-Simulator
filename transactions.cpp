@@ -14,14 +14,15 @@ struct compare_events{
     }
 };
 
-void process_payments(network* cur_network, const network_params& net_param){
-  vector<transaction> transactions_to_execute = get_random_transactions(net_param);
-
+void process_payments(network* cur_network, const network_params& net_param, vector<transaction>& transactions_to_execute){
   // Code for finding if the node has become inactive randmoly with given probability.
+
+  // If the probability is 0.05, then we generate a random number b/w 0 to 100, if it is less 
+  // than 5 then it is faulty, else not.
   std::default_random_engine generator;
   double faulty_prob = net_param.faulty_node_probability;
   ll num=1;
-  while(faulty_prob < 1.0){
+  while(faulty_prob < 1.0 && net_param.faulty_node_probability > 0.0){
     faulty_prob*=10;
     num*=10;
   }
@@ -33,7 +34,7 @@ void process_payments(network* cur_network, const network_params& net_param){
   // {event type, event}
   priority_queue<pair<int, path_var>, vector<pair<int, path_var>>, compare_events> process_events;
   
-  // Payment request
+  // Payment request, finds a path for each transaction requested.
   for(int ind=0;ind<transactions_to_execute.size();ind++){
     auto& cur_txn = transactions_to_execute[ind];
     // cur_txn.sender_id=1;
@@ -41,10 +42,13 @@ void process_payments(network* cur_network, const network_params& net_param){
     if(payment_request(cur_txn, cur_network)){
       // This transaction might be completed.
       vector<path_var> path;
-      path = get_payment_path(cur_txn, cur_network, net_param);
+      path = get_payment_path_using_bellman_ford(cur_txn, cur_network, net_param);
 
       cur_txn.path_length = path.size()-1;
-
+      if(path.empty()){
+        cout<<"Not possible to reach the destination due to lack of balances.\n\n\n";
+        continue;
+      }
       cout<<"Sender: "<<cur_txn.sender_id<<" Receiver: "<<
       cur_txn.receiver_id<<" Amt: "<<cur_txn.amount<<"\n";
       cout<<"Fee taken "<<cur_txn.fee<<"\n";
@@ -63,7 +67,7 @@ void process_payments(network* cur_network, const network_params& net_param){
   }
 
     vector<vector<path_var>> hops_processed(transactions_to_execute.size());
-  // Now we have the events to vbe processed and the time when they are ready to be processed.
+  // Now we have the events to be processed and the time when they are ready to be processed.
 
   while(!process_events.empty()){
     auto cur_event = process_events.top();
@@ -243,6 +247,7 @@ int get_path_calculation_time(){
     return rand()%100 + 100;
 }
 
+// Uses dijkstra algorithm which is centralised.
 vector<path_var> get_payment_path(transaction& req, network* cur_network,const network_params& net_param){
     int start_node = req.receiver_id; // Vs
     int dest_node = req.sender_id; // Vr
@@ -341,4 +346,84 @@ vector<path_var> get_payment_path(transaction& req, network* cur_network,const n
 
     return path;
 
+}
+
+// Uses Bellman ford algorithm, which is distributed.
+vector<path_var> get_payment_path_using_bellman_ford(transaction& req, network* cur_network,const network_params& net_param){
+    // cout<<"Called bellman ford algo\n";
+    int n = cur_network->nodes.size() +1;
+    vector<long long int> dis (n, 1e17);
+    dis[req.receiver_id] = req.amount;
+    vector<pair<int,edge*>> p (n, {-1,NULL});
+    int total_edges = cur_network->edges.size();
+    // cout<<" Total nodes: "<<n<<" total edges: "<<total_edges<<"\n";
+
+    for (int ind=0;ind<n-1;ind++)
+    {
+        bool any = false;
+        for (int i = 0; i < total_edges; ++i){
+            if(cur_network->edges.find(i)==cur_network->edges.end()){
+                cout<<"Edge id mapping not found in `get_payment_path_bellman_ford()` function, edge id: "
+                << i<<"\n";
+                continue;
+            }
+            auto cur_edge = cur_network->edges[i];
+
+            if(cur_network->edges.find(cur_edge->counter_edge_id) == cur_network->edges.end()){
+                cout<<"Edge id mapping not found in `get_payment_path_bellman_ford()` function, edge id: "
+                << cur_edge->counter_edge_id<<"\n";
+            }
+            
+            auto counter_edge = cur_network->edges[cur_edge->counter_edge_id];
+            ll balance_diff = abs(cur_edge->balance - counter_edge->balance);
+            ll fee_taken = calc_fee(cur_network->nodes[cur_edge->to_node_id],req.amount, balance_diff);
+            if (dis[cur_edge->from_node_id] < 1e17 && counter_edge->balance >= dis[cur_edge->from_node_id]){
+                if (dis[cur_edge->to_node_id] > dis[cur_edge->from_node_id] + fee_taken)
+                {
+                    dis[cur_edge->to_node_id] = dis[cur_edge->from_node_id] + fee_taken;
+                    p[cur_edge->to_node_id] = {cur_edge->from_node_id, counter_edge};
+                    any = true;
+                }
+            }
+        }
+        if (!any)  break;
+    }
+
+    if (dis[req.sender_id] >=1e17){
+        // We cannot reach via any possible path. i.e. no path can fullfil the required capacity.
+        req.status = 1; // req can't be completed due to limited channel capacity.
+        vector<path_var> empty_path_vec;
+        return empty_path_vec;
+        // Empty vector indicates that no path exists
+    }
+    vector<path_var> path;
+    int time_taken = get_path_calculation_time();
+    for(int v = req.sender_id; v!=-1 && v!= req.receiver_id; v = p[v].first){
+        path_var intermediate_node;
+        intermediate_node.node_id = v;
+        intermediate_node.time_taken = time_taken;
+        intermediate_node.outgoing_edge = p[v].second;
+        intermediate_node.fee_taken=0;
+        intermediate_node.amount_passed = 0;
+        path.push_back(intermediate_node);
+        // Note that the lower bound and upper bound of time
+        // for hop processing is arbitrarily chosen. ( 10 and 20)
+        time_taken += get_hop_processing_time(10,20);
+    }
+    path_var receiver_node;
+    receiver_node.node_id = req.receiver_id;
+    receiver_node.time_taken = time_taken;
+    receiver_node.outgoing_edge = NULL;
+    receiver_node.fee_taken=0;
+    path.push_back(receiver_node);
+
+    for(int i=1;i<path.size()-1;i++){
+        path[i].fee_taken  = dis[path[i].node_id] - dis[path[i+1].node_id];
+        path[i].amount_passed = dis[path[i+1].node_id];
+    }
+    if(!path.empty())path[0].amount_passed = req.amount;
+    req.path_length = path.size();
+    req.fee = dis[req.sender_id] - dis[req.receiver_id];
+
+    return path;
 }

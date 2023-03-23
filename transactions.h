@@ -4,7 +4,7 @@
 using namespace std;
 
 // Processes payments
-void process_payments(network* cur_network, const network_params& net_param);
+void process_payments(network* cur_network, const network_params& net_param, vector<transaction>& transactions_to_execute);
 
 // Returns a set of transactions
 vector<transaction> get_random_transactions(const network_params& net_param);
@@ -29,3 +29,6 @@ int get_hop_processing_time(int lower_limit, int upper_limit);
 // Returns path calculation time (random values)
 // Values vary between 100-200
 int get_path_calculation_time();
+
+// Uses Bellman ford algorithm to find the path, which is distributed.
+vector<path_var> get_payment_path_using_bellman_ford(transaction& req, network* cur_network,const network_params& net_param);

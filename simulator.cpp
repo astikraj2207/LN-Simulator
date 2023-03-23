@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <dirent.h>
 #include <sstream>
+#include <Python.h>
 
 #include <gsl/gsl_rng.h>
 #include <random>
@@ -95,6 +96,8 @@ void read_input(network_params* net_params){
           net_params->fees_lower_limit.imbalance_fee_const = stol(value);
         else if(key == "imbalance_fee_const_upper")
           net_params->fees_upper_limit.imbalance_fee_const = stol(value);
+        else if(key == "num_of_txn_sets")
+          net_params->num_of_txn_sets = stoi(value);
         else if(key == "num_of_txn")
           net_params->num_of_txn = stoi(value);
         else if(key == "txn_fee_upper_limit")
@@ -142,7 +145,12 @@ int main(int argc, char *argv[]) {
   n_nodes = new_network->nodes.size();
   n_edges = new_network->edges.size();
 
-  process_payments(new_network, net_params);
+  for(int i=0;i<net_params.num_of_txn_sets;i++){
+    cout<<"\n$$$$$$$$$$$$$$$-------------------------------------------------$$$$$$$$$$$$$$$$$$$\n";
+    cout<<"Processing Transaction set: "<<i+1<<"\n\n";
+    vector<transaction> transactions_to_execute = get_random_transactions(net_params);
+    process_payments(new_network, net_params, transactions_to_execute);
+  }
 
   return 0;
 }
