@@ -7,7 +7,6 @@
 #include <inttypes.h>
 #include <dirent.h>
 #include <sstream>
-#include <Python.h>
 
 #include <gsl/gsl_rng.h>
 #include <random>
